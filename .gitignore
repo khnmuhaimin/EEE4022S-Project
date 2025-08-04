@@ -4,3 +4,4 @@ modules
 tools
 zephyr
 build
+build-bootloader
