@@ -1,13 +1,18 @@
 manifest:
+  # Directory containing the manifest repo
+  self: apps
 
+  # Aliases for remote repos
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+
+  # Dependencies
   projects:
-    # --- CHANGE IS HERE ---
-    # Instead of the full 'zephyr' repo, we're pulling 'zephyr-testing'.
-    - name: ui-subsys
-      path: ui-subsys-path
-      url: https://github.com/khnmuhaimin/EEE4113F-Group-41-UI-Subsystem-2025
-      revision: main
-
-  # This section remains the same, defining your application.
-  self:
-    path: apps
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: v4.2.0
+      import:
+        name-allowlist:
+          - hal_espressif
+          - mcuboot
