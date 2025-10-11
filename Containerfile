@@ -5,7 +5,7 @@ FROM ubuntu:latest
 RUN apt update && apt upgrade -y
 
 # Install Python and pip
-RUN apt install -y python3 python3-pip
+RUN apt install -y python3 python3-pip  # needs the user to enter timezone info so this Containerfile won't work
 
 # Start a bash session
 CMD ["bash"]
