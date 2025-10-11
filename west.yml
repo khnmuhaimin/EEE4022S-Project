@@ -8,11 +8,6 @@ manifest:
       url: https://github.com/khnmuhaimin/EEE4113F-Group-41-UI-Subsystem-2025
       revision: main
 
-    - name: eee4022s-project-apps
-      path: apps
-      url: https://github.com/khnmuhaimin/EEE4022S-Project
-      revision: main
-
   # This section remains the same, defining your application.
   self:
     path: apps
