@@ -1,7 +1,7 @@
 manifest:
   # Directory containing the manifest repo
   self:
-    - path: apps
+    path: apps
 
   # Aliases for remote repos
   remotes:
