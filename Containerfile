@@ -18,6 +18,8 @@ pip install west
 
 # Setup the project workspace
 west init -m https://github.com/khnmuhaimin/EEE4022S-Project --mr main EEE4022S-Workspace
+cd EEE4022S-Workspace
+west update
 
 # Start a bash session
 CMD ["bash"]
