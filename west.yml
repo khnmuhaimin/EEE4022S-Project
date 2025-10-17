@@ -1,0 +1,19 @@
+manifest:
+  # Directory containing the manifest repo
+  self:
+    path: apps
+
+  # Aliases for remote repos
+  remotes:
+    - name: zephyrproject-rtos
+      url-base: https://github.com/zephyrproject-rtos
+
+  # Dependencies
+  projects:
+    - name: zephyr
+      remote: zephyrproject-rtos
+      revision: v4.2.0
+      import:
+        name-allowlist:
+          - hal_espressif
+          - mcuboot
