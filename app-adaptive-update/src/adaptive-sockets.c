@@ -27,6 +27,7 @@ LOG_MODULE_REGISTER(adaptive_sockets, LOG_LEVEL_DBG);
 #define NET_IF_1_STABLE_CHECKS_NEEDED 2
 #define ADAPTIVE_MAX_SEND_TRIES 3
 #define ADAPTIVE_MAX_RECV_TRIES 5
+#define NET_IF_STATUS_MONITOR_THREAD_STACK_SIZE 1024
 
 /*
  * Holds data for and Adaptive Socket
@@ -69,8 +70,77 @@ struct adaptive_sockets_layer
     int error;
 };
 
+#ifdef CONFIG_ADAPTIVE_SOCKETS_ENABLE_TEST
+/*
+ * the test suite assumes that socket requests are made sequentially
+ * (good for testing but not necessarily true in real life).
+ * The state will be update every time a socket is created so that
+ * the newly created socket will be tested using the new test state.
+ */
+
+enum adaptive_test_states
+{
+    RESET = 0,
+    NET_IF_1_NO_FAIL = 1,
+    NET_IF_2_NO_FAIL = 2,
+    NET_IF_1_FAIL_SENDTO = 3,
+    NET_IF_1_FAIL_RECVFROM = 4,
+    NET_IF_2_FAIL_SENDTO = 5,
+    NET_IF_2_FAIL_RECVFROM = 6,
+};
+
+struct adaptive_test_data
+{
+    struct k_mutex lock;
+    enum adaptive_test_state test_state;
+    bool before_fail;
+};
+
+static struct adaptive_test_data adapt_test_data = {0};
+
+static void adaptive_test_update_state()
+{
+    k_mutex_lock(&adapt_test_data.lock);
+    adapt_test_data.test_state++;
+    if (adapt_test_data.test_state > NET_IF_2_FAIL_RECVFROM)
+    {
+        adapt_test_data.test_state = NET_IF_1_NO_FAIL;
+    }
+    k_mutex_unlock(&adapt_test_data.lock);
+}
+
+static void adaptive_test_init()
+{
+    k_mutex_init(&adapt_test_data.lock);
+    adapt_test_data.test_state = RESET;
+    adapt_test_data.before_fail = true;
+}
+
+static bool adaptive_test_fail_at_sendto()
+{   
+    bool to_fail = (adapt_test_data.test_state == NET_IF_1_FAIL_SENDTO || dapt_test_data.test_state == NET_IF_2_FAIL_SENDTO);
+}
+
+static bool adaptive_test_fail_at_recvfrom()
+{
+    if ()
+    bool to_fail = (adapt_test_data.test_state == NET_IF_1_FAIL_RECVFROM || dapt_test_data.test_state == NET_IF_2_FAIL_RECVFROM);
+}
+
+static void adapt_test_set_before_fail(bool before_fail) {
+    adapt_test_data.before_fail = before_fail;
+}
+
+#else
+#define adaptive_test_init()
+#define adaptive_test_update_state()
+#define adaptive_test_fail_at_sendto() (false)
+#define adaptive_test_fail_at_recvfrom() (false)
+#define adapt_test_set_before_fail(before_fail)
+#endif
+
 static void net_if_status_monitor_thread(void *p1, void *p2, void *p3);
-K_THREAD_STACK_DEFINE(monitor_stack_area, 1024);
+K_THREAD_STACK_DEFINE(monitor_stack_area, NET_IF_STATUS_MONITOR_THREAD_STACK_SIZE);
 static struct adaptive_sockets_layer adapt_sockets_layer = {0};
 static bool adaptive_net_if_is_operational(struct net_if *iface);
 static int adaptive_close(void *obj);
@@ -301,9 +371,40 @@ static bool adaptive_net_if_is_operational(struct net_if *iface)
     return iface != NULL && net_if_is_admin_up(iface) && net_if_is_carrier_ok(iface) && !net_if_is_dormant(iface);
 }
 
+#ifdef CONFIG_ADAPTIVE_SOCKETS_ENABLE_TEST
+static struct net_if *adaptive_get_preferred_net_if(void)
+{
+    if (adapt_test_data.test_state == NET_IF_1_NO_FAIL)
+    {
+        return adapt_sockets_layer.net_if_1;
+    }
+    else if ((NET_IF_1_FAIL_SENDTO || NET_IF_1_FAIL_RECVFROM) && (adapt_test_data.before_fail))
+    {
+        return adapt_sockets_layer.net_if_1;
+    }
+    else if ((NET_IF_1_FAIL_SENDTO || NET_IF_1_FAIL_RECVFROM) && (!adapt_test_data.before_fail))
+    {
+        return adapt_sockets_layer.net_if_2;
+    }
+    else if (adapt_test_data.test_state == NET_IF_2_NO_FAIL)
+    {
+        return adapt_sockets_layer.net_if_2;
+    }
+    else if ((NET_IF_2_FAIL_SENDTO || NET_IF_2_FAIL_RECVFROM) && (adapt_test_data.before_fail))
+    {
+        return adapt_sockets_layer.net_if_2;
+    }
+    else if ((NET_IF_2_FAIL_SENDTO || NET_IF_2_FAIL_RECVFROM) && (!adapt_test_data.before_fail))
+    {
+        return adapt_sockets_layer.net_if_1;
+    }
+    return NULL;
+}
+#else
 static struct net_if *adaptive_get_preferred_net_if(void)
 {
     LOG_DBG("Running adaptive_get_preferred_net_if...");
+
     adaptive_update_net_if_statuses();
     k_mutex_lock(&adapt_sockets_layer.lock, K_FOREVER);
     struct net_if *preferred = NULL;
@@ -325,6 +426,7 @@ static struct net_if *adaptive_get_preferred_net_if(void)
     k_mutex_unlock(&adapt_sockets_layer.lock);
     return preferred;
 }
+#endif
 
 static struct net_if *adaptive_get_inner_net_if(struct device *dev)
 {
@@ -391,6 +493,10 @@ int adaptive_sockets_init(void)
     adapt_sockets_layer.net_if_1_operational = adaptive_net_if_is_operational(adapt_sockets_layer.net_if_1);
     adapt_sockets_layer.net_if_2_operational = adaptive_net_if_is_operational(adapt_sockets_layer.net_if_2);
     adapt_sockets_layer.net_if_1_successful_stable_checks = NET_IF_1_STABLE_CHECKS_NEEDED;
+
+    // set up tests (if enabled. otherwise, noop).
+    adaptive_test_init();
+
     k_mutex_unlock(&adapt_sockets_layer.lock);
     return 0;
 }
@@ -464,7 +570,7 @@ static ssize_t adaptive_sendto(void *obj, const void *buf, size_t buf_len, int f
         {
             adaptive_connect(socket, socket->dest_addr, socket->dest_addr_len);
         }
-        if (!dest_addr == NULL)
+        if (dest_addr == NULL)
         {
             socket->dest_addr = dest_addr;
             socket->dest_addr_len = dest_addr_len;
@@ -475,6 +581,11 @@ static ssize_t adaptive_sendto(void *obj, const void *buf, size_t buf_len, int f
             return -EINVAL;
         }
         int bytes_sent = 0;
+        if (adaptive_test_fail_at_sendto())
+        {
+            adapt_test_set_before_fail(false);
+            goto retry;
+        }
         bytes_sent = net_context_sendto(
             socket->context,
             buf,
@@ -484,6 +595,7 @@ static ssize_t adaptive_sendto(void *obj, const void *buf, size_t buf_len, int f
             adaptive_on_send,
             K_FOREVER,
             NULL);
+
         if (bytes_sent >= 0)
         {
             LOG_ERR("B0");
@@ -520,7 +632,7 @@ static ssize_t adaptive_sendto(void *obj, const void *buf, size_t buf_len, int f
         // retry logic needs to go here
         // get new preferred net if
         LOG_ERR("B5");
-
+    retry:
         struct net_if *preferred_iface = adaptive_get_preferred_net_if();
         if (preferred_iface == NULL)
         {
@@ -562,6 +674,11 @@ static ssize_t adaptive_recvfrom(void *obj, void *buf, size_t buf_len, int flags
     while (try < ADAPTIVE_MAX_RECV_TRIES)
     {
         LOG_DBG("Calling net_context_recv...");
+        if (adaptive_test_fail_at_recvfrom())
+        {
+            adapt_test_set_before_fail(false);
+            goto retry;
+        }
         error = (ssize_t)net_context_recv(socket->context, adaptive_on_receive, K_SECONDS(10), socket);
         if (error < 0)
         {
@@ -695,6 +812,8 @@ static bool adaptive_connection_is_supported(int family, int type, int proto)
 static int adaptive_get_socket(int family, int type, int proto)
 {
     LOG_DBG("Running adaptive_get_socket...");
+    adaptive_test_update_state();
+    adapt_test_set_before_fail(true);
 
     // creates a socket
     struct adaptive_socket *socket = k_calloc(1, sizeof(struct adaptive_socket));
