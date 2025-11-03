@@ -9,6 +9,7 @@ LOG_MODULE_REGISTER(adaptive_sockets, LOG_LEVEL_DBG);
 #include <zephyr/devicetree.h>
 #include <errno.h>
 #include <zephyr/net/net_offload.h>
+#include <zephyr/sys/fdtable.h>
 
 // node identifiers
 #define ADAPT_NET_DEV_1 DT_ALIAS(adaptive_net_device_1)
@@ -34,6 +35,9 @@ LOG_MODULE_REGISTER(adaptive_sockets, LOG_LEVEL_DBG);
  */
 struct adaptive_socket
 {
+    int family;
+    int type;
+    int proto;
     int fd;
     struct netif *net_if;
     struct net_context *context;
@@ -70,7 +74,7 @@ struct adaptive_sockets_layer
     int error;
 };
 
-#ifdef CONFIG_ADAPTIVE_SOCKETS_ENABLE_TEST
+#if CONFIG_ADAPTIVE_SOCKETS_ENABLE_TEST
 /*
  * the test suite assumes that socket requests are made sequentially
  * (good for testing but not necessarily true in real life).
@@ -78,7 +82,7 @@ struct adaptive_sockets_layer
  * the newly created socket will be tested using the new test state.
  */
 
-enum adaptive_test_states
+enum adaptive_test_state
 {
     RESET = 0,
     NET_IF_1_NO_FAIL = 1,
@@ -100,35 +104,55 @@ static struct adaptive_test_data adapt_test_data = {0};
 
 static void adaptive_test_update_state()
 {
-    k_mutex_lock(&adapt_test_data.lock);
+    k_mutex_lock(&adapt_test_data.lock, K_FOREVER);
     adapt_test_data.test_state++;
     if (adapt_test_data.test_state > NET_IF_2_FAIL_RECVFROM)
     {
         adapt_test_data.test_state = NET_IF_1_NO_FAIL;
     }
+    LOG_DBG("Test state updated to %d", (int)adapt_test_data.test_state);
     k_mutex_unlock(&adapt_test_data.lock);
 }
 
 static void adaptive_test_init()
 {
     k_mutex_init(&adapt_test_data.lock);
+    k_mutex_lock(&adapt_test_data.lock, K_FOREVER);
     adapt_test_data.test_state = RESET;
     adapt_test_data.before_fail = true;
+    k_mutex_unlock(&adapt_test_data.lock);
 }
 
 static bool adaptive_test_fail_at_sendto()
-{   
-    bool to_fail = (adapt_test_data.test_state == NET_IF_1_FAIL_SENDTO || dapt_test_data.test_state == NET_IF_2_FAIL_SENDTO);
+{
+    k_mutex_lock(&adapt_test_data.lock, K_FOREVER);
+    bool to_fail = (adapt_test_data.test_state == NET_IF_1_FAIL_SENDTO || adapt_test_data.test_state == NET_IF_2_FAIL_SENDTO);
+    k_mutex_unlock(&adapt_test_data.lock);
+    return to_fail;
 }
 
 static bool adaptive_test_fail_at_recvfrom()
 {
-    if ()
-    bool to_fail = (adapt_test_data.test_state == NET_IF_1_FAIL_RECVFROM || dapt_test_data.test_state == NET_IF_2_FAIL_RECVFROM);
+    k_mutex_lock(&adapt_test_data.lock, K_FOREVER);
+    bool to_fail = (adapt_test_data.test_state == NET_IF_1_FAIL_RECVFROM || adapt_test_data.test_state == NET_IF_2_FAIL_RECVFROM);
+    k_mutex_unlock(&adapt_test_data.lock);
+    return to_fail;
 }
 
-static void adapt_test_set_before_fail(bool before_fail) {
+static void adaptive_test_set_before_fail(bool before_fail)
+{
+    k_mutex_lock(&adapt_test_data.lock, K_FOREVER);
     adapt_test_data.before_fail = before_fail;
+    k_mutex_unlock(&adapt_test_data.lock);
+}
+
+static bool adaptive_test_get_before_fail()
+{
+    bool result;
+    k_mutex_lock(&adapt_test_data.lock, K_FOREVER);
+    result = adapt_test_data.before_fail;
+    k_mutex_unlock(&adapt_test_data.lock);
+    return result;
 }
 
 #else
@@ -136,11 +160,12 @@ static void adapt_test_set_before_fail(bool before_fail) {
 #define adaptive_test_update_state()
 #define adaptive_test_fail_at_sendto() (false)
 #define adaptive_test_fail_at_recvfrom() (false)
-#define adapt_test_set_before_fail(before_fail)
+#define adaptive_test_set_before_fail(before_fail)
+#define adaptive_test_get_before_fail() (true)
 #endif
 
 static void net_if_status_monitor_thread(void *p1, void *p2, void *p3);
-K_THREAD_STACK_DEFINE(monitor_stack_area, NET_IF_STATUS_MONITOR_THREAD_STACK_SIZE);
+// K_THREAD_STACK_DEFINE(monitor_stack_area, NET_IF_STATUS_MONITOR_THREAD_STACK_SIZE);
 static struct adaptive_sockets_layer adapt_sockets_layer = {0};
 static bool adaptive_net_if_is_operational(struct net_if *iface);
 static int adaptive_close(void *obj);
@@ -164,99 +189,67 @@ int adaptive_getsockname(void *obj, struct sockaddr *addr, socklen_t *addrlen);
 
 ssize_t adaptive_read(void *obj, void *buf, size_t sz)
 {
-    LOG_DBG("Running adaptive_read...");
     return -ENOSYS;
 }
 
 ssize_t adaptive_write(void *obj, const void *buf, size_t sz)
 {
-    LOG_DBG("Running adaptive_write...");
     return -ENOSYS;
 }
+
 // Note: The signature for ioctl often uses va_list, but we mock the common usage here.
 int adaptive_ioctl(void *obj, unsigned int request, va_list args)
 {
-    // Cast the opaque pointer back to your adaptive socket structure
-    // struct adaptive_socket *socket = (struct adaptive_socket *)obj;
-    // int ret;
-
-    // LOG_DBG("Running adaptive_ioctl: Forwarding request 0x%X", request);
-
-    // // 1. Validate the context exists
-    // if (!socket || !socket->context) {
-    //     LOG_ERR("IOCTL failed: Invalid socket or context.");
-    //     return -EINVAL;
-    // }
-
-    // // 2. Forward the IOCTL request and its arguments directly to the
-    // //    underlying net_context handler.
-    // ret = net_context_ioctl(socket->context, request, args);
-
-    // if (ret < 0) {
-    //     LOG_WRN("IOCTL request 0x%X failed on underlying context: %d", request, ret);
-    // }
-
-    // return ret;
-    return -ENOSYS;
+    return 0;
 }
 
 int adaptive_shutdown(void *obj, int how)
 {
-    LOG_DBG("Running adaptive_shutdown...");
     return -ENOSYS;
 }
 
 int adaptive_bind(void *obj, const struct sockaddr *addr, socklen_t addrlen)
 {
-    LOG_DBG("Running adaptive_bind...");
     return -ENOSYS;
 }
 
 int adaptive_listen(void *obj, int backlog)
 {
-    LOG_DBG("Running adaptive_listen...");
     return -ENOSYS;
 }
 
 int adaptive_accept(void *obj, struct sockaddr *addr, socklen_t *addrlen)
 {
-    LOG_DBG("Running adaptive_accept...");
     return -ENOSYS;
 }
 
 int adaptive_getsockopt(void *obj, int level, int optname, void *optval, socklen_t *optlen)
 {
-    LOG_DBG("Running adaptive_getsockopt...");
     return -ENOSYS;
 }
 
 int adaptive_setsockopt(void *obj, int level, int optname, const void *optval, socklen_t optlen)
 {
-    LOG_DBG("Running adaptive_setsockopt...");
     return -ENOSYS;
 }
 
 ssize_t adaptive_sendmsg(void *obj, const struct msghdr *msg, int flags)
 {
-    LOG_DBG("Running adaptive_sendmsg...");
     return -ENOSYS;
 }
 
 ssize_t adaptive_recvmsg(void *obj, struct msghdr *msg, int flags)
 {
-    LOG_DBG("Running adaptive_recvmsg...");
     return -ENOSYS;
 }
 
 int adaptive_getpeername(void *obj, struct sockaddr *addr, socklen_t *addrlen)
 {
-    LOG_DBG("Running adaptive_getpeername...");
     return -ENOSYS;
 }
 
 int adaptive_getsockname(void *obj, struct sockaddr *addr, socklen_t *addrlen)
 {
-    LOG_DBG("Running adaptive_getsockname...");
     return -ENOSYS;
 }
 
@@ -283,7 +276,7 @@ static const struct socket_op_vtable adapt_socket_ops = {
 
 static void adaptive_update_net_if_statuses()
 {
-    LOG_DBG("Running adaptive_update_net_if_statuses...");
+    // LOG_DBG("Running adaptive_update_net_if_statuses...");
     k_mutex_lock(&adapt_sockets_layer.lock, K_FOREVER);
     adapt_sockets_layer.net_if_1_operational = adaptive_net_if_is_operational(adapt_sockets_layer.net_if_1);
     if (!adapt_sockets_layer.net_if_1_operational)
@@ -296,7 +289,7 @@ static void adaptive_update_net_if_statuses()
 
 static void net_if_status_monitor_thread(void *p1, void *p2, void *p3)
 {
-    LOG_DBG("Running net_if_status_monitor_thread...");
+    // LOG_DBG("Running net_if_status_monitor_thread...");
     while (true)
     {
         k_sleep(NET_IF_STATUS_POLLING_INTERVAL);
@@ -318,18 +311,8 @@ static void net_if_status_monitor_thread(void *p1, void *p2, void *p3)
 
 static bool adaptive_net_if_1_is_stable()
 {
-    LOG_DBG("Running adaptive_net_if_1_is_stable...");
+    // LOG_DBG("Running adaptive_net_if_1_is_stable...");
     return adapt_sockets_layer.net_if_1_successful_stable_checks == NET_IF_1_STABLE_CHECKS_NEEDED;
-}
-
-void log_interface_conditions(struct net_if *iface)
-{
-    if (iface == NULL)
-    {
-        LOG_ERR("Cannot log conditions: Interface pointer is NULL.");
-        return;
-    }
-    LOG_DBG("Admin up: %d\nCarrier okay: %d\nIs dormant: %d", net_if_is_admin_up(iface), net_if_is_carrier_ok(iface), net_if_is_dormant(iface));
 }
 
 void log_ipv4(struct sockaddr *addr, socklen_t addrlen)
@@ -347,7 +330,7 @@ void log_ipv4(struct sockaddr *addr, socklen_t addrlen)
             LOG_DBG("Address: %s:%u",
                     addr_str,
                     ntohs(sin->sin_port));
-            LOG_DBG("Address Family (sin_family): %d (AF_INET=2)", sin->sin_family);
+            LOG_DBG("Address Family (sin_family): %d (AF_INET=1)", sin->sin_family);
         }
         else
         {
@@ -367,61 +350,78 @@ void log_ipv4(struct sockaddr *addr, socklen_t addrlen)
 
 static bool adaptive_net_if_is_operational(struct net_if *iface)
 {
-    LOG_DBG("Running adaptive_net_if_is_operational...");
+    // LOG_DBG("Running adaptive_net_if_is_operational...");
     return iface != NULL && net_if_is_admin_up(iface) && net_if_is_carrier_ok(iface) && !net_if_is_dormant(iface);
 }
 
-#ifdef CONFIG_ADAPTIVE_SOCKETS_ENABLE_TEST
+#if CONFIG_ADAPTIVE_SOCKETS_ENABLE_TEST
 static struct net_if *adaptive_get_preferred_net_if(void)
 {
+    struct net_if *preferred = NULL;
     if (adapt_test_data.test_state == NET_IF_1_NO_FAIL)
     {
-        return adapt_sockets_layer.net_if_1;
+        preferred = adapt_sockets_layer.net_if_1;
     }
     else if ((NET_IF_1_FAIL_SENDTO || NET_IF_1_FAIL_RECVFROM) && (adapt_test_data.before_fail))
     {
-        return adapt_sockets_layer.net_if_1;
+        preferred = adapt_sockets_layer.net_if_1;
     }
     else if ((NET_IF_1_FAIL_SENDTO || NET_IF_1_FAIL_RECVFROM) && (!adapt_test_data.before_fail))
     {
-        return adapt_sockets_layer.net_if_2;
+        preferred = adapt_sockets_layer.net_if_2;
     }
     else if (adapt_test_data.test_state == NET_IF_2_NO_FAIL)
     {
-        return adapt_sockets_layer.net_if_2;
+        preferred = adapt_sockets_layer.net_if_2;
     }
     else if ((NET_IF_2_FAIL_SENDTO || NET_IF_2_FAIL_RECVFROM) && (adapt_test_data.before_fail))
     {
-        return adapt_sockets_layer.net_if_2;
+        preferred = adapt_sockets_layer.net_if_2;
     }
-    else if ((NET_IF_2_FAIL_SENDTO || NET_IF_2_FAIL_RECVFROM) && (!adapt_test_data.before_fail))
+    // else if ((NET_IF_2_FAIL_SENDTO || NET_IF_2_FAIL_RECVFROM) && (!adapt_test_data.before_fail))
+    else
     {
-        return adapt_sockets_layer.net_if_1;
+        preferred = adapt_sockets_layer.net_if_1;
     }
-    return NULL;
+    if (preferred == adapt_sockets_layer.net_if_1)
+    {
+        LOG_INF("Preferring net if 1 for test...");
+    }
+    else
+    {
+        LOG_INF("Preferring net if 2 for test...");
+    }
+    return preferred;
 }
 #else
 static struct net_if *adaptive_get_preferred_net_if(void)
 {
-    LOG_DBG("Running adaptive_get_preferred_net_if...");
+    // LOG_DBG("Running adaptive_get_preferred_net_if...");
 
     adaptive_update_net_if_statuses();
     k_mutex_lock(&adapt_sockets_layer.lock, K_FOREVER);
     struct net_if *preferred = NULL;
-    LOG_DBG("net_if_1_operational %d", adapt_sockets_layer.net_if_1_operational);
-    LOG_DBG("adaptive_net_if_1_is_stable() %d", adaptive_net_if_1_is_stable());
-    LOG_DBG("adaptive_net_if_is_operational(adapt_sockets_layer.net_if_2) %d", adaptive_net_if_is_operational(adapt_sockets_layer.net_if_2));
+    // LOG_DBG("net_if_1_operational %d", adapt_sockets_layer.net_if_1_operational);
+    // LOG_DBG("adaptive_net_if_1_is_stable() %d", adaptive_net_if_1_is_stable());
+    // LOG_DBG("adaptive_net_if_is_operational(adapt_sockets_layer.net_if_2) %d", adaptive_net_if_is_operational(adapt_sockets_layer.net_if_2));
+    // LOG_DBG("adapt_sockets_layer.net_if_1: %p | adapt_sockets_layer.net_if_2: %p", adapt_sockets_layer.net_if_1, adapt_sockets_layer.net_if_2);
 
     if (adapt_sockets_layer.net_if_1_operational && adaptive_net_if_1_is_stable())
+    // if (adapt_sockets_layer.net_if_1_operational)
     // if (false)
     {
-        LOG_DBG("Preferring net if 1...");
+        LOG_INF("Preferring net if 1...");
         preferred = adapt_sockets_layer.net_if_1;
     }
     else if (adaptive_net_if_is_operational(adapt_sockets_layer.net_if_2))
+    // else if (true)
     {
-        LOG_DBG("Preferring net if 1...");
+        LOG_INF("Preferring net if 2...");
         preferred = adapt_sockets_layer.net_if_2;
+    }
+    else
+    {
+        LOG_ERR("No net if was preferred.");
     }
     k_mutex_unlock(&adapt_sockets_layer.lock);
     return preferred;
@@ -430,7 +430,7 @@ static struct net_if *adaptive_get_preferred_net_if(void)
 
 static struct net_if *adaptive_get_inner_net_if(struct device *dev)
 {
-    LOG_DBG("Running adaptive_get_inner_net_if...");
+    // LOG_DBG("Running adaptive_get_inner_net_if...");
     if (dev == NULL)
     {
         LOG_ERR("No device given!");
@@ -456,6 +456,7 @@ static struct net_if *adaptive_get_inner_net_if(struct device *dev)
 
 int adaptive_sockets_init(void)
 {
+    LOG_DBG("Running adaptive_sockets_init...");
     k_mutex_init(&adapt_sockets_layer.lock);
     k_mutex_lock(&adapt_sockets_layer.lock, K_FOREVER);
     adapt_sockets_layer.error = 0;
@@ -477,17 +478,18 @@ int adaptive_sockets_init(void)
         adapt_sockets_layer.error = ENODEV;
         return -ENODEV;
     }
+    // net_if_set_default(adapt_sockets_layer.net_if_2); // needed for making a socket. otherwise net_context_get doesnt call get of the modem's api
 
     // create a thread to monitor net ifs
-    adapt_sockets_layer.monitor_tid = k_thread_create(
-        &adapt_sockets_layer.monitor_thread_data,
-        monitor_stack_area,
-        K_THREAD_STACK_SIZEOF(monitor_stack_area),
-        net_if_status_monitor_thread,
-        NULL, NULL, NULL,
-        NET_IF_STATUS_POLLING_PRIORITY,
-        0,
-        K_NO_WAIT);
+    // adapt_sockets_layer.monitor_tid = k_thread_create(
+    //     &adapt_sockets_layer.monitor_thread_data,
+    //     monitor_stack_area,
+    //     K_THREAD_STACK_SIZEOF(monitor_stack_area),
+    //     net_if_status_monitor_thread,
+    //     NULL, NULL, NULL,
+    //     NET_IF_STATUS_POLLING_PRIORITY,
+    //     0,
+    //     K_NO_WAIT);
 
     // set net ifs current status
     adapt_sockets_layer.net_if_1_operational = adaptive_net_if_is_operational(adapt_sockets_layer.net_if_1);
@@ -505,48 +507,63 @@ static int adaptive_connect(void *obj, const struct sockaddr *dest_addr, socklen
 {
     struct adaptive_socket *socket = (struct adaptive_socket *)obj;
     LOG_DBG("Running adaptive_connect for socket %d...", socket->fd);
+    // LOG_DBG("obj: %p", obj);
+    // log_ipv4(dest_addr, dest_addr_len);
 
     // destination might be given here or in the send function. This is to account for both cases.
     // we're storing destination for later
     socket->net_if = NULL;
+    socket->connected = false;
     socket->dest_addr = dest_addr;
     socket->dest_addr_len = dest_addr_len;
     // we need to be bound at this stage cause net_context_connect might try to call net_offloaded funcs
-    struct net_if *iface = adaptive_get_preferred_net_if();
-    net_context_bind_iface(socket->context, iface);
-    LOG_DBG("adaptive_connect: About to call net_context_connect...");
-    // hack to get modem working
-    if (iface == adapt_sockets_layer.net_if_2)
+    if (socket->context != NULL)
     {
-        LOG_DBG("Running the modem hack...");
-        net_offload_get(iface, AF_INET, SOCK_DGRAM, IPPROTO_UDP, &(socket->context));
+        net_context_put(socket->context);
+        socket->context = NULL;
+    }
+    int error_code = net_context_get(socket->family, socket->type, socket->proto, &socket->context);
+    if (error_code < 0)
+    {
+        LOG_ERR("Failed to get a network context. Error %d.", error_code);
+    }
+    socket->net_if = adaptive_get_preferred_net_if();
+    // LOG_DBG("socket->net_if: %p", socket->net_if);
+    // LOG_DBG("socket->context: %p", socket->context);
+    net_context_bind_iface(socket->context, socket->net_if);
+    // LOG_DBG("adaptive_connect: About to call net_context_connect...");
+    // hack to get modem working
+    if (socket->net_if == adapt_sockets_layer.net_if_2)
+    {
+        // LOG_WRN("Running the modem hack...");
+        // Not 100% sure why i need this but if its not here, i get this error: ""
+        net_offload_get(socket->net_if, AF_INET, SOCK_DGRAM, IPPROTO_UDP, &(socket->context));
         net_context_set_iface(socket->context, adapt_sockets_layer.net_if_2);
     }
-    LOG_DBG("net_context_connect: Context %p, Dest IP: %p", socket->context, dest_addr);
+    // LOG_DBG("net_context_connect: Context %p, Dest IP: %p", socket->context, dest_addr);
     int error = net_context_connect(
         socket->context,
-        dest_addr,
-        dest_addr_len,
+        socket->dest_addr,
+        socket->dest_addr_len,
         NULL,
         K_FOREVER,
         NULL);
     if (error < 0)
     {
         LOG_ERR("Failed to connect the net context. Error: %d.", error);
+        socket->connected = false;
     }
     else
     {
-        LOG_INF("Connected the net context.");
-        socket->net_if = iface;
+        socket->connected = true;
     }
-    socket->connected = error == 0;
-    LOG_INF("Socket connected? %d", socket->connected);
+    // LOG_INF("Socket connected? %d", socket->connected);
     return error;
 }
 
 void adaptive_on_send(struct net_context *context, int status, void *user_data)
 {
-    LOG_DBG("Running adaptive_on_send...");
+    // LOG_DBG("Running adaptive_on_send...");
 }
 
 static ssize_t adaptive_sendto(void *obj, const void *buf, size_t buf_len, int flags,
@@ -554,26 +571,38 @@ static ssize_t adaptive_sendto(void *obj, const void *buf, size_t buf_len, int f
 {
     struct adaptive_socket *socket = (struct adaptive_socket *)obj;
     LOG_DBG("Running adaptive_sendto for socket %d...", socket->fd);
-
-    if (socket->send_buf != NULL)
+    if (adaptive_test_get_before_fail())
     {
-        // in case of socket reuse before callin recv
-        k_free(socket->send_buf);
-        socket->send_buf = NULL;
-        socket->send_buf_len = 0;
+        // update at the start of every send command
+        // if statement is to not update on retries. only at the start of new send commands
+        adaptive_test_update_state();
+        socket->connected = false; // force a reconnection
     }
+    // LOG_DBG("obj: %p | buf: %p | buf_len: %zu | flags: %d", obj, buf, buf_len, flags);
+    // log_ipv4(dest_addr, dest_addr_len);
+
+    if (dest_addr != NULL)
+    {
+        socket->dest_addr = dest_addr;
+        socket->dest_addr_len = dest_addr_len;
+    }
+
+    // if (socket->send_buf != NULL)
+    // {
+    //     // in case of socket reuse before callin recv
+    //     k_free(socket->send_buf);
+    //     socket->send_buf = NULL;
+    //     socket->send_buf_len = 0;
+    // }
 
     uint8_t try = 0;
     while (try < ADAPTIVE_MAX_SEND_TRIES)
     {
+        // LOG_ERR("Adaptive sendto try=%d", (int)try);
         if (!socket->connected)
         {
+            // LOG_WRN("Socket was not connected.");
             adaptive_connect(socket, socket->dest_addr, socket->dest_addr_len);
-        }
-        if (dest_addr == NULL)
-        {
-            socket->dest_addr = dest_addr;
-            socket->dest_addr_len = dest_addr_len;
         }
 
         if (socket->dest_addr == NULL)
@@ -581,73 +610,70 @@ static ssize_t adaptive_sendto(void *obj, const void *buf, size_t buf_len, int f
             return -EINVAL;
         }
         int bytes_sent = 0;
-        if (adaptive_test_fail_at_sendto())
+        if (adaptive_test_fail_at_sendto() && adaptive_test_get_before_fail())
         {
-            adapt_test_set_before_fail(false);
+            LOG_DBG("Simulating failed send.");
+            adaptive_test_set_before_fail(false);
             goto retry;
         }
+
         bytes_sent = net_context_sendto(
             socket->context,
-            buf,
-            buf_len,
+            buf == NULL ? socket->send_buf : buf,
+            buf == NULL ? socket->send_buf_len : buf_len,
             socket->dest_addr,
             socket->dest_addr_len,
             adaptive_on_send,
             K_FOREVER,
             NULL);
 
+        if (bytes_sent < 0)
+        {
+            LOG_ERR("Failed net_context_sendto: %d", (int)bytes_sent);
+        }
+
         if (bytes_sent >= 0)
         {
-            LOG_ERR("B0");
-            socket->send_buf = k_calloc(buf_len, 1); // free in recv and in close socket
-            if (socket->send_buf == NULL)
-
+            if (buf != NULL)
             {
-                LOG_ERR("B1");
-
+                // in case of socket reuse before callin recv
+                // this is a first time call
+                k_free(socket->send_buf);
+                socket->send_buf = NULL;
                 socket->send_buf_len = 0;
-                // failed to store data
-                // send is still a success
-                // so that means we should continue with the network operations
-                // we just wont be able to retry in recv.
-            }
-            else
-            {
-                LOG_ERR("B2");
+                socket->send_buf = k_calloc(buf_len, 1); // free in recv and in close socket
+                if (socket->send_buf == NULL)
+                {
 
-                memcpy(socket->send_buf, buf, buf_len);
-                socket->send_buf_len = buf_len;
+                    socket->send_buf_len = 0;
+                    // failed to store data
+                    // send is still a success
+                    // so that means we should continue with the network operations
+                    // we just wont be able to retry in recv.
+                }
+                else
+                {
+                    memcpy(socket->send_buf, buf, buf_len);
+                    socket->send_buf_len = buf_len;
+                }
             }
-            LOG_ERR("B3");
 
             return bytes_sent; // SUCCESS EXIT CONDITION
         }
         else if (try == ADAPTIVE_MAX_SEND_TRIES - 1)
         {
-            LOG_ERR("B4");
-
             // we wont be trying again
             return bytes_sent; // contains an error code
         }
         // retry logic needs to go here
         // get new preferred net if
-        LOG_ERR("B5");
     retry:
-        struct net_if *preferred_iface = adaptive_get_preferred_net_if();
-        if (preferred_iface == NULL)
-        {
-            LOG_ERR("B6");
-            // return an error for net if down
-            return ENETDOWN;
-        }
-        LOG_ERR("B7");
-
         // if got it, retry using that net if
-        socket->net_if = preferred_iface;
         socket->connected = false;
         try++;
     }
-    LOG_DBG("Leaving adaptive_sendto for socket %d...", socket->fd);
+    // LOG_DBG("socket->net_if: %p", socket->net_if);
+    // LOG_DBG("Done running adaptive_sendto...");
 }
 
 static void adaptive_on_receive(
@@ -658,7 +684,7 @@ static void adaptive_on_receive(
     int status,
     void *user_data)
 {
-    LOG_DBG("Running adaptive_on_receive...");
+    // LOG_DBG("Running adaptive_on_receive...");
     struct adaptive_socket *socket = (struct adaptive_socket *)user_data;
     socket->recv_pkt = pkt;
     k_sem_give(&socket->recv_pkt_sem);
@@ -669,23 +695,27 @@ static ssize_t adaptive_recvfrom(void *obj, void *buf, size_t buf_len, int flags
 {
     struct adaptive_socket *socket = (struct adaptive_socket *)obj;
     LOG_DBG("Running adaptive_recvfrom for socket %d...", socket->fd);
+    // LOG_DBG("socket->net_if: %p", socket->net_if);
+
     ssize_t error = 0;
     uint8_t try = 0;
     while (try < ADAPTIVE_MAX_RECV_TRIES)
     {
-        LOG_DBG("Calling net_context_recv...");
-        if (adaptive_test_fail_at_recvfrom())
+        // LOG_DBG("Calling net_context_recv...");
+        if (adaptive_test_fail_at_recvfrom() && adaptive_test_get_before_fail())
         {
-            adapt_test_set_before_fail(false);
+            LOG_DBG("Simulating fail receive.");
+            adaptive_test_set_before_fail(false);
+            socket->connected = false;
             goto retry;
         }
-        error = (ssize_t)net_context_recv(socket->context, adaptive_on_receive, K_SECONDS(10), socket);
+        error = (ssize_t)net_context_recv(socket->context, adaptive_on_receive, K_NO_WAIT, socket);
         if (error < 0)
         {
             LOG_ERR("Failed to receive data from context. Error: %d.", error);
             goto retry;
         }
-        error = (ssize_t)k_sem_take(&socket->recv_pkt_sem, K_SECONDS(60));
+        error = (ssize_t)k_sem_take(&socket->recv_pkt_sem, K_SECONDS(30));
         if (error == -EAGAIN)
         {
             LOG_ERR("Timeout waiting for data.");
@@ -705,11 +735,13 @@ static ssize_t adaptive_recvfrom(void *obj, void *buf, size_t buf_len, int flags
         if (socket->send_buf == NULL)
         {
             // retry not possible
+            LOG_WRN("Rety is not possible. Send data was not cached.");
             return error;
         }
-        if (try == ADAPTIVE_MAX_RECV_TRIES - 1)
+        if (try <= ADAPTIVE_MAX_RECV_TRIES - 1)
         {
-            error = adaptive_sendto(socket, socket->send_buf, socket->send_buf_len, 0, NULL, 0);
+            // LOG_DBG("socket->net_if: %p", socket->net_if);
+            error = adaptive_sendto(socket, NULL, NULL, 0, NULL, 0);
             if (error < 0)
             {
                 // return because send also failed
@@ -724,29 +756,17 @@ static ssize_t adaptive_recvfrom(void *obj, void *buf, size_t buf_len, int flags
         goto cleanup;
     }
 
+    ssize_t bytes_to_copy;
+    // LOG_DBG("Just before net_pkt_get_len: socket: %p | fd: %d | socket->recv_pkt: %p", socket, socket->fd, socket->recv_pkt);
+    // LOG_DBG("socket->net_if: %p", socket->net_if);
     size_t pkt_len = net_pkt_get_len(socket->recv_pkt);
     net_pkt_cursor_init(socket->recv_pkt);
-    // hacky solution: espressif wifi driver seems to add extra 28 bytes of data
-    if (socket->net_if)
-    {
-        const struct device *dev = net_if_get_device(socket->net_if);
 
-        if (dev)
-        {
-            LOG_DBG("adaptive_recvfrom : Network Interface: %s.", dev->name);
-        }
-        else
-        {
-            LOG_DBG("adaptive_recvfrom : Network Interface: [Device not found].");
-        }
-    }
-    else
-    {
-        LOG_DBG("adaptive_recvfrom : Socket not bound to an interface.");
-    }
     if (net_if_get_wifi_sta() == socket->net_if)
     {
-        LOG_DBG("Socket is using wifi. Will try to do hack.");
+        // hacky solution: espressif wifi driver seems to add extra 28 bytes of data
+        // LOG_DBG("socket->net_if: %p", socket->net_if);
+        // LOG_DBG("Socket is using wifi. Will try to do hack.");
         if (pkt_len < 28)
         {
             error = -EMSGSIZE;
@@ -755,30 +775,31 @@ static ssize_t adaptive_recvfrom(void *obj, void *buf, size_t buf_len, int flags
         else
         {
             pkt_len = pkt_len - 28;
-            LOG_DBG("Trying to skip 28 bytes.");
+            // LOG_DBG("Trying to skip 28 bytes.");
             net_pkt_skip(socket->recv_pkt, 28);
         }
     }
-    else
-    {
-        LOG_DBG("Socket is using modem.");
-    }
-    ssize_t bytes_to_copy = (pkt_len < buf_len ? pkt_len : buf_len);
-    LOG_DBG("max_length: %zu, packet_length: %zu, bytes_to_copy: %zu", buf_len, pkt_len, bytes_to_copy);
+    bytes_to_copy = (pkt_len < buf_len ? pkt_len : buf_len);
+    // LOG_DBG("max_length: %zu, packet_length: %zu, bytes_to_copy: %zu", buf_len, pkt_len, bytes_to_copy);
     error = (ssize_t)net_pkt_read(socket->recv_pkt, buf, bytes_to_copy);
+
     if (error < 0)
     {
         LOG_ERR("Failed to read network packet. Error code: %d.", error);
     }
 cleanup:
+    // LOG_DBG("Clean up");
     if (socket->recv_pkt != NULL)
     {
+        // LOG_DBG("Unreffing packet...");
         net_pkt_unref(socket->recv_pkt); // unref the packet regardless of whether it was read successfully.
         socket->recv_pkt = NULL;
     }
     k_free(socket->send_buf);
     socket->send_buf = NULL;
     socket->send_buf_len = 0;
+    // LOG_DBG("bytes_to_copy: %d", (int)bytes_to_copy);
+    // LOG_HEXDUMP_DBG(buf, bytes_to_copy, "Data Buffer Contents");
     return error == 0 ? (ssize_t)bytes_to_copy : error;
 }
 
@@ -805,15 +826,14 @@ static int adaptive_close(void *obj)
 
 static bool adaptive_connection_is_supported(int family, int type, int proto)
 {
-    LOG_DBG("Running adaptive_connection_is_supported...");
+    // LOG_DBG("Running adaptive_connection_is_supported...");
     return family == AF_INET && type == SOCK_DGRAM && proto == IPPROTO_UDP;
 }
 
 static int adaptive_get_socket(int family, int type, int proto)
 {
     LOG_DBG("Running adaptive_get_socket...");
-    adaptive_test_update_state();
-    adapt_test_set_before_fail(true);
+    adaptive_test_set_before_fail(true);
 
     // creates a socket
     struct adaptive_socket *socket = k_calloc(1, sizeof(struct adaptive_socket));
@@ -837,15 +857,19 @@ static int adaptive_get_socket(int family, int type, int proto)
         socket,
         (struct fd_op_vtable *)&adapt_socket_ops,
         ZVFS_MODE_IFSOCK);
+
+    socket->family = family;
+    socket->type = type;
+    socket->proto = proto;
     // LOG_DBG("Finalized a file descriptor...");
     // gets a context
-    LOG_DBG("Getting a net context...");
-    int error_code = net_context_get(family, type, proto, &socket->context);
-    if (error_code < 0)
-    {
-        LOG_ERR("Failed to get a network context. Error %d.", error_code);
-    }
-    LOG_DBG("Got a net context...");
+    // LOG_DBG("Getting a net context...");
+    // int error_code = net_context_get(family, type, proto, &socket->context);
+    // if (error_code < 0)
+    // {
+    //     LOG_ERR("Failed to get a network context. Error %d.", error_code);
+    // }
+    // LOG_DBG("Got a net context...");
     // socket remained unbound
     // bind it as late as possible
     // net_context_bind_iface(socket->context, adapt_sockets_layer.net_if_1);

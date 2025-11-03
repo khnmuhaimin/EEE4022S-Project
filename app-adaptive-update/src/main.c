@@ -26,10 +26,10 @@ LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 #include <zephyr/device.h>
 #include <zephyr/net/net_config.h>
 
-// #define CONFIG_WIFI_SAMPLE_SSID "Openserve-8B43"
-// #define CONFIG_WIFI_SAMPLE_PSK "RctVkh8VLh"
-#define CONFIG_WIFI_SAMPLE_SSID "My Wifi"
-#define CONFIG_WIFI_SAMPLE_PSK "G4JR2H98"
+#define CONFIG_WIFI_SAMPLE_SSID "Openserve-8B43"
+#define CONFIG_WIFI_SAMPLE_PSK "RctVkh8VLh"
+// #define CONFIG_WIFI_SAMPLE_SSID "My Wifi"
+// #define CONFIG_WIFI_SAMPLE_PSK "G4JR2H98"
 #define UPDATE_SERVER_IP_ADDRESS "52.207.250.14"
 #define WIFI_DEV_NODE DT_ALIAS(wifi)
 const struct device *wifi_dev = DEVICE_DT_GET(WIFI_DEV_NODE);
@@ -83,7 +83,7 @@ static void wifi_connection_event_handler(struct net_mgmt_event_callback *cb, ui
     {
         LOG_INF("Connected to %s", CONFIG_WIFI_SAMPLE_SSID);
         k_sem_give(&wifi_connection_sem);
-        LOG_INF("Gave wifi_connection_sem.");
+        // LOG_INF("Gave wifi_connection_sem.");
         // LOG_DBG("wifi_connection_event_handler: default net if is %s.", net_if_get_default()->if_dev->dev->name);
         // int ret = net_config_init_by_iface(iface, "Initializing network", NET_CONFIG_NEED_IPV4,
         //                                    CONFIG_NET_CONFIG_INIT_TIMEOUT * MSEC_PER_SEC);
@@ -104,10 +104,10 @@ static void wifi_ipv4_event_handler(struct net_mgmt_event_callback *cb, uint64_t
 {
     if (mgmt_event == NET_EVENT_IPV4_ADDR_ADD)
     {
-        LOG_DBG("Got an IP address");
+        // LOG_DBG("Got an IP address");
         // print_ip_addr(net_if_get_wifi_sta());
         k_sem_give(&wifi_ip_address_sem);
-        LOG_INF("Gave wifi_ip_address_sem.");
+        // LOG_INF("Gave wifi_ip_address_sem.");
     }
 }
 
@@ -137,7 +137,7 @@ static int connect_to_wifi(void)
 
     if (!sta_iface)
     {
-        LOG_INF("STA: interface no initialized");
+        LOG_ERR("Station interface not initialized.");
         return -EIO;
     }
 
@@ -149,13 +149,13 @@ static int connect_to_wifi(void)
     sta_config.channel = WIFI_CHANNEL_ANY;
     sta_config.band = WIFI_FREQ_BAND_2_4_GHZ;
 
-    LOG_INF("Connecting to SSID: %s\n", sta_config.ssid);
+    // LOG_INF("Connecting to SSID: %s\n", sta_config.ssid);
 
     int ret = net_mgmt(NET_REQUEST_WIFI_CONNECT, sta_iface, &sta_config,
                        sizeof(struct wifi_connect_req_params));
     if (ret)
     {
-        LOG_ERR("Unable to Connect to (%s)", CONFIG_WIFI_SAMPLE_SSID);
+        // LOG_ERR("Unable to Connect to (%s)", CONFIG_WIFI_SAMPLE_SSID);
     }
 
     return ret;
@@ -163,16 +163,9 @@ static int connect_to_wifi(void)
 
 static int wait_for_wifi(void)
 {
-
-    LOG_DBG("Waiting for wifi...");
+    // LOG_DBG("Waiting for wifi...");
     k_sem_take(&wifi_connection_sem, K_FOREVER);
     k_sem_take(&wifi_ip_address_sem, K_FOREVER);
-}
-
-void start_updatehub(void)
-{
-    LOG_INF("Starting UpdateHub polling mode");
-    updatehub_autohandler();
 }
 
 #define MAX_COAP_MSG_LEN 256
@@ -213,31 +206,34 @@ static int send_simple_coap_request(int sock, uint8_t method)
         }
     }
 
-    switch (method) {
-	case COAP_METHOD_GET:
-	case COAP_METHOD_DELETE:
-		break;
+    switch (method)
+    {
+    case COAP_METHOD_GET:
+    case COAP_METHOD_DELETE:
+        break;
 
-	case COAP_METHOD_PUT:
-	case COAP_METHOD_POST:
-		r = coap_packet_append_payload_marker(&request);
-		if (r < 0) {
-			LOG_ERR("Unable to append payload marker");
-			goto end;
-		}
+    case COAP_METHOD_PUT:
+    case COAP_METHOD_POST:
+        r = coap_packet_append_payload_marker(&request);
+        if (r < 0)
+        {
+            LOG_ERR("Unable to append payload marker");
+            goto end;
+        }
 
-		r = coap_packet_append_payload(&request, (uint8_t *)payload,
-					       sizeof(payload) - 1);
-		if (r < 0) {
-			LOG_ERR("Not able to append payload");
-			goto end;
-		}
+        r = coap_packet_append_payload(&request, (uint8_t *)payload,
+                                       sizeof(payload) - 1);
+        if (r < 0)
+        {
+            LOG_ERR("Not able to append payload");
+            goto end;
+        }
 
-		break;
-	default:
-		r = -EINVAL;
-		goto end;
-	}
+        break;
+    default:
+        r = -EINVAL;
+        goto end;
+    }
 
     net_hexdump("Request", request.data, request.offset);
 
@@ -324,6 +320,7 @@ end:
 
 int main(void)
 {
+    k_sleep(K_SECONDS(5));
 
     /* The image of application needed be confirmed */
     LOG_INF("Confirming the boot image");
@@ -343,63 +340,71 @@ int main(void)
     LOG_DBG("Initializing adaptive sockets...");
     adaptive_sockets_init();
     LOG_DBG("Starting updatehub...");
-    start_updatehub();
+    updatehub_autohandler();
 
-    while (1)
-    {
-        LOG_INF("Hello, old image!");
-        k_sleep(K_SECONDS(10));
-    }
-
-    // ret = 0;
-    // struct sockaddr_in addr;
-    // addr.sin_family = AF_INET;
-    // addr.sin_port = htons(5683);
-    // net_addr_pton(AF_INET, "134.102.218.18", &addr.sin_addr);
-
-    // int sock = zsock_socket(addr.sin_family, SOCK_DGRAM, IPPROTO_UDP);
-    // if (sock < 0)
-    // {
-    //     LOG_ERR("Failed to create UDP socket %d", errno);
-    //     return -sock;
-    // }
-    // else
-    // {
-    //     LOG_DBG("Created socket with fd %d.", sock);
+    // while (true) {
+    //     LOG_DBG("Running main...");
+    //     k_sleep(K_SECONDS(10));
     // }
 
-    // ret = zsock_connect(sock, (struct sockaddr *)&addr, sizeof(addr));
-    // if (ret < 0)
-    // {
-    //     LOG_ERR("Cannot connect to UDP remote : %d", errno);
-    //     return -ret;
-    // }
-    // else
-    // {
-    //     LOG_INF("Connected to UDP remote.");
-    // }
 
-    // ret = send_simple_coap_request(sock, COAP_METHOD_GET);
-    // if (ret < 0)
-    // {
-    //     LOG_ERR("Failed to send coap request. Error code %d.", ret);
-    //     return ret;
-    // }
-    // else
-    // {
-    //     LOG_INF("Sent coap request successfully");
-    // }
+    // int i = 1;
+    // while (true) {
+    //     LOG_DBG("Sending hello request #%d...", i);
+    //     ret = 0;
+    //     struct sockaddr_in addr;
+    //     addr.sin_family = AF_INET;
+    //     addr.sin_port = htons(5683);
+    //     net_addr_pton(AF_INET, "134.102.218.18", &addr.sin_addr);
 
-    // ret = process_simple_coap_reply(sock);
-    // if (ret < 0)
-    // {
-    //     LOG_ERR("Error process_simple_coap_reply: %d", errno);
-    // }
-    // else
-    // {
-    //     LOG_INF("Processed coap reply correctly.");
-    // }
+    //     int sock = zsock_socket(addr.sin_family, SOCK_DGRAM, IPPROTO_UDP);
+    //     if (sock < 0)
+    //     {
+    //         LOG_ERR("Failed to create UDP socket %d", errno);
+    //         return -sock;
+    //     }
+    //     else
+    //     {
+    //         LOG_DBG("Created socket with fd %d.", sock);
+    //     }
 
+    //     ret = zsock_connect(sock, (struct sockaddr *)&addr, sizeof(addr));
+    //     if (ret < 0)
+    //     {
+    //         LOG_ERR("Cannot connect to UDP remote : %d", errno);
+    //         return -ret;
+    //     }
+    //     else
+    //     {
+    //         LOG_INF("Connected to UDP remote.");
+    //     }
+
+    //     ret = send_simple_coap_request(sock, COAP_METHOD_GET);
+    //     if (ret < 0)
+    //     {
+    //         LOG_ERR("Failed to send coap request. Error code %d.", ret);
+    //         return ret;
+    //     }
+    //     else
+    //     {
+    //         LOG_INF("Sent coap request successfully");
+    //     }
+
+    //     ret = process_simple_coap_reply(sock);
+    //     if (ret < 0)
+    //     {
+    //         LOG_ERR("Error process_simple_coap_reply: %d", errno);
+    //     }
+    //     else
+    //     {
+    //         LOG_INF("Processed coap reply correctly.");
+    //     }
+    //     zsock_close(sock);
+    //     LOG_DBG("Starting to sleep.");
+    //     k_msleep(10000);
+    //     LOG_DBG("Done sleeping.");
+    //     i++;
+    // }
 
     return 0;
 }
