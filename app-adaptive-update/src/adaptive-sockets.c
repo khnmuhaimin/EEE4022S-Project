@@ -357,16 +357,18 @@ static bool adaptive_net_if_is_operational(struct net_if *iface)
 #if CONFIG_ADAPTIVE_SOCKETS_ENABLE_TEST
 static struct net_if *adaptive_get_preferred_net_if(void)
 {
+    k_mutex_lock(&adapt_test_data.lock, K_FOREVER);
+    k_mutex_lock(&adapt_sockets_layer.lock, K_FOREVER);
     struct net_if *preferred = NULL;
     if (adapt_test_data.test_state == NET_IF_1_NO_FAIL)
     {
         preferred = adapt_sockets_layer.net_if_1;
     }
-    else if ((NET_IF_1_FAIL_SENDTO || NET_IF_1_FAIL_RECVFROM) && (adapt_test_data.before_fail))
+    else if ((adapt_test_data.test_state == NET_IF_1_FAIL_SENDTO || adapt_test_data.test_state == NET_IF_1_FAIL_RECVFROM) && (adapt_test_data.before_fail))
     {
         preferred = adapt_sockets_layer.net_if_1;
     }
-    else if ((NET_IF_1_FAIL_SENDTO || NET_IF_1_FAIL_RECVFROM) && (!adapt_test_data.before_fail))
+    else if ((adapt_test_data.test_state == NET_IF_1_FAIL_SENDTO || adapt_test_data.test_state == NET_IF_1_FAIL_RECVFROM) && (!adapt_test_data.before_fail))
     {
         preferred = adapt_sockets_layer.net_if_2;
     }
@@ -374,7 +376,7 @@ static struct net_if *adaptive_get_preferred_net_if(void)
     {
         preferred = adapt_sockets_layer.net_if_2;
     }
-    else if ((NET_IF_2_FAIL_SENDTO || NET_IF_2_FAIL_RECVFROM) && (adapt_test_data.before_fail))
+    else if ((adapt_test_data.test_state == NET_IF_2_FAIL_SENDTO || adapt_test_data.test_state == NET_IF_2_FAIL_RECVFROM) && (adapt_test_data.before_fail))
     {
         preferred = adapt_sockets_layer.net_if_2;
     }
@@ -391,6 +393,8 @@ static struct net_if *adaptive_get_preferred_net_if(void)
     {
         LOG_INF("Preferring net if 2 for test...");
     }
+    k_mutex_unlock(&adapt_sockets_layer.lock);
+    k_mutex_unlock(&adapt_test_data.lock);
     return preferred;
 }
 #else
